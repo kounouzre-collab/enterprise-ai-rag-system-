@@ -1,0 +1,106 @@
+import time
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
+from pydantic import BaseModel, Field
+
+# 1. تهيئة التطبيق مع التوثيق المتقدم
+app = FastAPI(
+    title="Enterprise AI Engine & RAG Service",
+    description="نظام خلفي متكامل لمعالجة النصوص وإجابات الذكاء الاصطناعي المدعومة بالوثائق",
+    version="2.0.0",
+)
+
+# 2. نماذج البيانات (Pydantic Models) لتنظيم البيانات القادمة والمغادرة
+class DocumentInput(BaseModel):
+    title: str = Field(..., example="تقرير المبيعات 2026")
+    content: str = Field(..., example="حققت الشركة نمواً بنسبة 25% في النصف الأول...")
+    category: Optional[str] = Field("General", example="Finance")
+
+class QueryInput(BaseModel):
+    question: str = Field(..., example="كم كانت نسبة نمو مبيعات الشركة؟")
+    max_results: int = Field(default=3, ge=1, le=10)
+
+class AIResponse(BaseModel):
+    question: str
+    answer: str
+    sources_found: int
+    execution_time_sec: float
+    status: str
+
+# 3. قاعدة بيانات وهمية لتخزين المستندات (In-Memory Database)
+documents_db = []
+
+# 4. دالة الحماية والتحقق من المفتاح (Security Dependency)
+def verify_api_key(x_api_key: str = Header(..., description="رمز الوصول الأمني")):
+    if x_api_key != "secret-ai-token-123":
+        raise HTTPException(status_code=403, detail="رمز الأمان غير صحيح!")
+    return x_api_key
+
+# 5. نقاط الاتصال (Endpoints)
+
+@app.get("/", tags=["System Check"])
+def system_health():
+    """فحص حالة السيرفر والنظام"""
+    return {
+        "status": "Online",
+        "system_name": "AI RAG Enterprise Core",
+        "total_documents_indexed": len(documents_db),
+        "timestamp": time.time()
+    }
+
+@app.post("/documents/add", tags=["Knowledge Base"], dependencies=[Depends(verify_api_key)])
+def add_document(doc: DocumentInput, background_tasks: BackgroundTasks):
+    """إضافة وثيقة جديدة للذاكرة وتدريب النظام عليها"""
+    doc_id = len(documents_db) + 1
+    stored_doc = {"id": doc_id, **doc.dict()}
+    documents_db.append(stored_doc)
+    
+    # مهمة خلفية لمعالجة النص بدون تعطيل المستخدم
+    background_tasks.add_task(process_document_embeddings, doc_id, doc.content)
+    
+    return {
+        "message": "تم إضافة الوثيقة بنجاح وجاري معالجتها بالذكاء الاصطناعي",
+        "document_id": doc_id
+    }
+
+@app.get("/documents/all", tags=["Knowledge Base"])
+def list_documents():
+    """عرض جميع الوثائق المخزنة في قاعدة البيانات"""
+    return {"total": len(documents_db), "documents": documents_db}
+
+@app.post("/ai/rag-query", response_model=AIResponse, tags=["AI Core"])
+def rag_search_and_answer(query: QueryInput):
+    """البحث الذكي داخل الوثائق وإعادة إجابة دقيقة"""
+    start_time = time.time()
+    
+    if not documents_db:
+        raise HTTPException(status_code=404, detail="قاعدة البيانات فارغة، يرجى إضافة وثائق أولاً!")
+    
+    # محاكاة خوارزمية البحث الذكي (Similarity Search)
+    matched_docs = [
+        doc for doc in documents_db 
+        if any(word in doc["content"] for word in query.question.split())
+    ]
+    
+    # محاكاة توليد الإجابة بواسطة نموذج الذكاء الاصطناعي (LLM Response)
+    if matched_docs:
+        context = " ".join([d["content"] for d in matched_docs[:query.max_results]])
+        generated_answer = f"بناءً على الوثائق المتاحة: تم العثور على معلومات متعلقة بـ '{query.question}'. النص المعتمد: ({context[:100]}...)"
+    else:
+        generated_answer = "عذراً، لم أجد معلومات متعلقة بسؤالك في قاعدة البيانات الحالية."
+
+    execution_time = round(time.time() - start_time, 4)
+    
+    return AIResponse(
+        question=query.question,
+        answer=generated_answer,
+        sources_found=len(matched_docs),
+        execution_time_sec=execution_time,
+        status="Success"
+    )
+
+# دالة مساعدة للمعالجة في الخلفية
+def process_document_embeddings(doc_id: int, content: str):
+    print(f"[{time.strftime('%H:%M:%S')}] جاري تحويل الوثيقة رقم {doc_id} إلى Vector Embeddings...")
+    time.sleep(2)  # محاكاة عملية معقدة تأخذ وقت
+    print(f"[{time.strftime('%H:%M:%S')}] اكتملت معالجة الوثيقة رقم {doc_id} بنجاح!")
